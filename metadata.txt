@@ -1,0 +1,47 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=Correção de Curva de Nível
+qgisMinimumVersion=3.0
+description=Este plugin identifica e corrige linhas de curva de nível que intersectam vetores de massa d'água.
+version=0.1
+author=Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius
+email=e.tadeu.eb@ime.eb.br; joao.pereira@ime.eb.br; viniciusmagalhaes@ime.eb.br
+
+about=Este complemento identifica e corrige linhas de curvas de nível que intersectam vetores de massa d'água.
+
+tracker=https://github.com/e-tadeu/PFC_correcao_curva_nivel_massa_agua.git
+repository=https://github.com/e-tadeu/PFC_correcao_curva_nivel_massa_agua.git
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=yes
+# Uncomment the following line and add your changelog:
+# changelog=
+
+# Tags are comma separated with spaces allowed
+tags=python, qgis, curvasdenivel, massasdagua
+
+homepage=https://github.com/e-tadeu/PFC_correcao_curva_nivel_massa_agua.git
+category=Analysis
+icon=icon.png
+# experimental flag
+experimental=False
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+
