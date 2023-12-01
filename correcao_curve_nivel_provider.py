@@ -54,8 +54,6 @@ class CorrecaoCurvaNivelProvider(QgsProcessingProvider):
         Loads all algorithms belonging to this provider.
         """
         self.addAlgorithm(CorrecaoCurvaNivelAlgorithm())
-        # add additional algorithms here
-        # self.addAlgorithm(MyOtherAlgorithm())
 
     def id(self):
         """
@@ -63,7 +61,7 @@ class CorrecaoCurvaNivelProvider(QgsProcessingProvider):
         string should be a unique, short, character only string, eg "qgis" or
         "gdal". This string should not be localised.
         """
-        return 'Corretor de curvas de nível com massa d'água'
+        return "Corretor de curvas de nível com massa d'água"
 
     def name(self):
         """
@@ -72,7 +70,7 @@ class CorrecaoCurvaNivelProvider(QgsProcessingProvider):
 
         This string should be short (e.g. "Lastools") and localised.
         """
-        return self.tr('Corretor de curvas de nível com massa d'água')
+        return self.tr("Corretor de curvas de nível com massa d'água")
 
     def icon(self):
         """
