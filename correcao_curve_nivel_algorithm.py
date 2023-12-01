@@ -30,12 +30,16 @@ __copyright__ = '(C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'
 
 __revision__ = '$Format:%H$'
 
+import os
+from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsFeatureSink,
                        QgsProcessingAlgorithm,
-                       QgsProcessingParameterFeatureSource,
+                       QgsProcessingParameterRasterLayer,
+                       QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterFeatureSink)
+import processing
 
 
 class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
@@ -57,7 +61,9 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     OUTPUT = 'OUTPUT'
-    INPUT = 'INPUT'
+    INPUT_RASTER = 'INPUT_RASTER'
+    INPUT_VECTOR = 'INPUT_VECTOR'
+    INPUT_AGUA = 'INPUT_AGUA'
 
     def initAlgorithm(self, config):
         """
@@ -68,10 +74,23 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         # We add the input vector features source. It can have any kind of
         # geometry.
         self.addParameter(
-            QgsProcessingParameterFeatureSource(
-                self.INPUT,
-                self.tr('Input layer'),
-                [QgsProcessing.TypeVectorAnyGeometry]
+            QgsProcessingParameterRasterLayer(
+                self.INPUT_RASTER,
+                self.tr("Insira o Modelo Digital de Elevação"),
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterVectorLayer(
+                self.INPUT_VECTOR, 
+                self.tr("Insira as curvas de nível"),
+                [QgsProcessing.TypeVectorLine]
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterVectorLayer(
+                self.INPUT_AGUA,
+                self.tr("Insira a camada de massa d'água"),
+                types=[QgsProcessing.TypeVectorPolygon]
             )
         )
 
@@ -93,19 +112,45 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         # Retrieve the feature source and sink. The 'dest_id' variable is used
         # to uniquely identify the feature sink, and must be included in the
         # dictionary returned by the processAlgorithm function.
-        source = self.parameterAsSource(parameters, self.INPUT, context)
-        (sink, dest_id) = self.parameterAsSink(parameters, self.OUTPUT,
-                context, source.fields(), source.wkbType(), source.sourceCrs())
+        curvas = self.parameterAsVectorLayer(parameters, self.INPUT_VECTOR, context)
+        massas = self.parameterAsVectorLayer(parameters, self.INPUT_AGUA, context)
+        (sink, dest_id) = self.parameterAsSink(parameters, 
+                                               self.OUTPUT,
+                                                context,
+                                                curvas.fields(),
+                                                curvas.wkbType(),
+                                                curvas.sourceCrs())
 
+        feedback.setProgressText('Procurando e corrigindo geometrias inválidas nas camadas de vetores...')
+
+        #Correção de geometrias inválidas nas camadas de vetores
+        curves = processing.run("native:fixgeometries",
+                                {'INPUT':curvas,
+                                 'METHOD':0,
+                                 'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        
+        water = processing.run("native:fixgeometries", 
+                               {'INPUT':massas,
+                                'METHOD':1,
+                                'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        
+        feedback.setProgressText('Procurando e corrigindo geometrias inválidas nas camadas de vetores...')
+
+        #Obtenção da intersecção das curvas de nível com as massas d'água
+        intersection = processing.run("native:intersection",
+                                      {'INPUT':curves,
+                                       'OVERLAY':water,
+                                       'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        
         # Compute the number of steps to display within the progress bar and
         # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
+        total = 100.0 / intersection.featureCount() if intersection.featureCount() else 0
+        features = intersection.getFeatures()
 
         for current, feature in enumerate(features):
             # Stop the algorithm if cancel button has been clicked
             if feedback.isCanceled():
-                break
+                return {self.OUTPUT: "Cancelado pelo usuário"}
 
             # Add a feature in the sink
             sink.addFeature(feature, QgsFeatureSink.FastInsert)
@@ -113,12 +158,15 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
             # Update the progress bar
             feedback.setProgress(int(current * total))
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
+        # Configurando o estilo da camada
+        style_file = os.path.join(os.path.dirname(__file__), 'interseccoes.qml')
+        processing.run('native:setlayerstyle', 
+                       {'INPUT': dest_id,
+                        'STYLE': style_file}, 
+                       context=context, 
+                       feedback=feedback, 
+                       is_child_algorithm=True)
+        
         return {self.OUTPUT: dest_id}
 
     def name(self):
@@ -152,4 +200,4 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         return CorrecaoCurvaNivelAlgorithm()
     
     def shortHelpString(self):
-        return self.tr("Este processing identifica e corrige curvas de nível que interceptam vetores de massa d'água deixando-os conforma a ADGV.")
+        return self.tr("Este processing identifica e corrige curvas de nível que interceptam vetores de massa d'água deixando-os conforme a Norma da Especificação Técnica para Aquisição de Dados Geoespaciais Vetoriais (ET-ADVG) versão 3.0 (EB80-N-72.005)")
