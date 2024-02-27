@@ -38,7 +38,8 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterRasterLayer,
                        QgsProcessingParameterVectorLayer,
-                       QgsProcessingParameterFeatureSink)
+                       QgsProcessingParameterFeatureSink,
+                       QgsVectorLayer)
 import processing
 
 
@@ -62,7 +63,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
     OUTPUT = 'OUTPUT'
     INPUT_RASTER = 'INPUT_RASTER'
-    INPUT_VECTOR = 'INPUT_VECTOR'
+    #INPUT_VECTOR = 'INPUT_VECTOR'
     INPUT_AGUA = 'INPUT_AGUA'
 
     def initAlgorithm(self, config):
@@ -79,13 +80,13 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 self.tr("Insira o Modelo Digital de Elevação"),
             )
         )
-        self.addParameter(
-            QgsProcessingParameterVectorLayer(
-                self.INPUT_VECTOR, 
-                self.tr("Insira as curvas de nível"),
-                [QgsProcessing.TypeVectorLine]
-            )
-        )
+        #self.addParameter(
+        #    QgsProcessingParameterVectorLayer(
+        #        self.INPUT_VECTOR, 
+        #        self.tr("Insira as curvas de nível"),
+        #        [QgsProcessing.TypeVectorLine]
+        #    )
+        #)
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.INPUT_AGUA,
@@ -112,8 +113,24 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         # Retrieve the feature source and sink. The 'dest_id' variable is used
         # to uniquely identify the feature sink, and must be included in the
         # dictionary returned by the processAlgorithm function.
-        curvas = self.parameterAsVectorLayer(parameters, self.INPUT_VECTOR, context)
+        mdt = self.parameterAsRasterLayer(parameters, self.INPUT_RASTER, context)
         massas = self.parameterAsVectorLayer(parameters, self.INPUT_AGUA, context)
+
+        feedback.setProgressText('\nExtraindo as curvas de nível a partir do Modelo Digital de Terreno...')
+        #Extração das curvas de nível a partir do MDT
+        curvas_i = processing.run("gdal:contour", 
+                                {'INPUT':mdt,
+                                 'BAND':1,
+                                 'INTERVAL':10,
+                                 'FIELD_NAME':'cota',
+                                 'CREATE_3D':False,
+                                 'IGNORE_NODATA':False,
+                                 'NODATA':None,
+                                 'OFFSET':0,
+                                 'EXTRA':'',
+                                 'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        curvas = QgsVectorLayer(curvas_i, 'curvas_de_nível', 'ogr')
+
         (sink, dest_id) = self.parameterAsSink(parameters, 
                                                self.OUTPUT,
                                                 context,
