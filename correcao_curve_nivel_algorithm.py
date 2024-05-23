@@ -38,7 +38,9 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterRasterLayer,
                        QgsProcessingParameterVectorLayer,
-                       QgsProcessingParameterFeatureSink)
+                       QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterEnum,
+                       QgsProcessingParameterNumber)
 import processing
 
 
@@ -64,6 +66,9 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     INPUT_RASTER = 'INPUT_RASTER'
     INPUT_VECTOR = 'INPUT_VECTOR'
     INPUT_AGUA = 'INPUT_AGUA'
+    INPUT_SCALE = 'INPUT_SCALE'
+    CUSTOM_SCALE = 'CUSTOM_SCALE'
+    BUFFER_SIZE = 'BUFFER_SIZE'
 
     def initAlgorithm(self, config):
         """
@@ -93,6 +98,28 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 types=[QgsProcessing.TypeVectorPolygon]
             )
         )
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.INPUT_SCALE,
+                self.tr("Selecione a escala"),
+                options=['1/25.000', '1/50.000', '1/100.000', '1/250.000', 'Personalizada'],
+                defaultValue=0
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.CUSTOM_SCALE,
+                self.tr("Insira a escala personalizada (apenas se 'Personalizada' for selecionada)"),
+                optional=True
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.BUFFER_SIZE,
+                self.tr("Tamanho do buffer em torno das massas d'água (opcional)"),
+                optional=True
+            )
+        )
 
         # We add a feature sink in which to store our processed features (this
         # usually takes the form of a newly created vector layer when the
@@ -114,6 +141,18 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         # dictionary returned by the processAlgorithm function.
         curvas = self.parameterAsVectorLayer(parameters, self.INPUT_VECTOR, context)
         massas = self.parameterAsVectorLayer(parameters, self.INPUT_AGUA, context)
+        scale_option = self.parameterAsEnum(parameters, self.INPUT_SCALE, context)
+        custom_scale = self.parameterAsDouble(parameters, self.CUSTOM_SCALE, context)
+        buffer_size = self.parameterAsDouble(parameters, self.BUFFER_SIZE, context)
+        
+        if scale_option == 4:  # Personalizada
+            if custom_scale <= 0:
+                raise QgsProcessingException(self.tr("A escala personalizada deve ser um valor positivo."))
+            scale = custom_scale
+        else:
+            scales = [25000, 50000, 100000, 250000]
+            scale = scales[scale_option]
+
         (sink, dest_id) = self.parameterAsSink(parameters, 
                                                self.OUTPUT,
                                                 context,
@@ -142,6 +181,18 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                        'OVERLAY':water,
                                        'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
+        if buffer_size:
+            feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+            water = processing.run("native:buffer",
+                                   {'INPUT': water,
+                                    'DISTANCE': buffer_size,
+                                    'SEGMENTS': 5,
+                                    'DISSOLVE': True,
+                                    'END_CAP_STYLE': 0,
+                                    'JOIN_STYLE': 0,
+                                    'MITER_LIMIT': 2,
+                                    'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+            
         # Compute the number of steps to display within the progress bar and
         # get features from source
         total = 100.0 / intersection.featureCount() if intersection.featureCount() else 0
