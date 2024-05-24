@@ -40,7 +40,10 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterEnum,
-                       QgsProcessingParameterNumber)
+                       QgsProcessingParameterNumber,
+                       QgsProcessingOutputVectorLayer,
+                       QgsProcessingException,
+                       QgsProject)
 import processing
 
 
@@ -69,6 +72,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     INPUT_SCALE = 'INPUT_SCALE'
     CUSTOM_SCALE = 'CUSTOM_SCALE'
     BUFFER_SIZE = 'BUFFER_SIZE'
+    BUFFER_OUTPUT = 'BUFFER_OUTPUT' #Essa camada será removida a posteriori, serve de ref para o desenvolvedor
 
     def initAlgorithm(self, config):
         """
@@ -130,6 +134,12 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Output layer')
             )
         )
+        self.addOutput(
+            QgsProcessingOutputVectorLayer(
+                self.BUFFER_OUTPUT,
+                self.tr("Camada de buffer das massas d'água")
+            )
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
         """
@@ -145,6 +155,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         custom_scale = self.parameterAsDouble(parameters, self.CUSTOM_SCALE, context)
         buffer_size = self.parameterAsDouble(parameters, self.BUFFER_SIZE, context)
         
+        #A variavel scale refere-se ao denominador de escala
         if scale_option == 4:  # Personalizada
             if custom_scale <= 0:
                 raise QgsProcessingException(self.tr("A escala personalizada deve ser um valor positivo."))
@@ -183,7 +194,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         
         if buffer_size:
             feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-            water = processing.run("native:buffer",
+            buffer = processing.run("native:buffer",
                                    {'INPUT': water,
                                     'DISTANCE': buffer_size,
                                     'SEGMENTS': 5,
@@ -193,6 +204,48 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                     'MITER_LIMIT': 2,
                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
             
+            feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+            # Adicionar a camada de buffer ao projeto
+            QgsProject.instance().addMapLayer(buffer)
+
+        else:
+            if custom_scale:
+                lim_aquidade = 0.0002 #O limite da aquidade visual é de 0,2mm (0,0002m)
+                buffer_size = lim_aquidade*scale
+                feedback.setProgressText(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade} o buffer é de {buffer_size}.')
+                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+                buffer = processing.run("native:buffer",
+                                    {'INPUT': water,
+                                        'DISTANCE': buffer_size,
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'END_CAP_STYLE': 0,
+                                        'JOIN_STYLE': 0,
+                                        'MITER_LIMIT': 2,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                
+                feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+                # Adicionar a camada de buffer ao projeto
+                QgsProject.instance().addMapLayer(buffer)
+            else:    
+                lim_aquidade = 0.0002 #O limite da aquidade visual é de 0,2mm (0,0002m)
+                buffer_size = lim_aquidade*scale
+                feedback.setProgressText(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade} o buffer é de {buffer_size}.')
+                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+                buffer = processing.run("native:buffer",
+                                    {'INPUT': water,
+                                        'DISTANCE': buffer_size,
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'END_CAP_STYLE': 0,
+                                        'JOIN_STYLE': 0,
+                                        'MITER_LIMIT': 2,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                
+                feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+                # Adicionar a camada de buffer ao projeto
+                QgsProject.instance().addMapLayer(buffer)
+
         # Compute the number of steps to display within the progress bar and
         # get features from source
         total = 100.0 / intersection.featureCount() if intersection.featureCount() else 0
