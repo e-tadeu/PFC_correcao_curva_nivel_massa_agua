@@ -34,6 +34,7 @@ import os
 from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
+                       QgsFeature,
                        QgsFeatureSink,
                        QgsProcessingAlgorithm,
                        QgsProcessingParameterRasterLayer,
@@ -43,7 +44,9 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterNumber,
                        QgsProcessingOutputVectorLayer,
                        QgsProcessingException,
-                       QgsProject)
+                       QgsProject,
+                       QgsVectorLayer,
+                       QgsWkbTypes)
 import processing
 
 
@@ -65,29 +68,18 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     # used when calling the algorithm from another algorithm, or when
     # calling from the QGIS console.
 
-    OUTPUT = 'OUTPUT'
-    INPUT_RASTER = 'INPUT_RASTER'
+    # Constantes usadas para referenciar os parâmetros e saídas
     INPUT_VECTOR = 'INPUT_VECTOR'
     INPUT_AGUA = 'INPUT_AGUA'
     INPUT_SCALE = 'INPUT_SCALE'
     CUSTOM_SCALE = 'CUSTOM_SCALE'
     BUFFER_SIZE = 'BUFFER_SIZE'
-    BUFFER_OUTPUT = 'BUFFER_OUTPUT' #Essa camada será removida a posteriori, serve de ref para o desenvolvedor
-
-    def initAlgorithm(self, config):
+    OUTPUT = 'OUTPUT'
+    
+    def initAlgorithm(self, config=None):
         """
-        Here we define the inputs and output of the algorithm, along
-        with some other properties.
+        Define os parâmetros de entrada e saída do algoritmo.
         """
-
-        # We add the input vector features source. It can have any kind of
-        # geometry.
-        self.addParameter(
-            QgsProcessingParameterRasterLayer(
-                self.INPUT_RASTER,
-                self.tr("Insira o Modelo Digital de Terreno"),
-            )
-        )
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.INPUT_VECTOR, 
@@ -120,42 +112,28 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterNumber(
                 self.BUFFER_SIZE,
-                self.tr("Tamanho do buffer em torno das massas d'água (opcional)"),
+                self.tr("Tamanho do buffer em torno das massas d'água"),
                 optional=True
             )
         )
-
-        # We add a feature sink in which to store our processed features (this
-        # usually takes the form of a newly created vector layer when the
-        # algorithm is run in QGIS).
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                self.tr('Output layer')
+                self.tr('Curvas de Nível Ajustadas')
             )
         )
-        self.addOutput(
-            QgsProcessingOutputVectorLayer(
-                self.BUFFER_OUTPUT,
-                self.tr("Camada de buffer das massas d'água")
-            )
-        )
-
+    
     def processAlgorithm(self, parameters, context, feedback):
         """
-        Here is where the processing itself takes place.
+        Executa o processamento principal do algoritmo.
         """
-
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
         curvas = self.parameterAsVectorLayer(parameters, self.INPUT_VECTOR, context)
         massas = self.parameterAsVectorLayer(parameters, self.INPUT_AGUA, context)
         scale_option = self.parameterAsEnum(parameters, self.INPUT_SCALE, context)
         custom_scale = self.parameterAsDouble(parameters, self.CUSTOM_SCALE, context)
         buffer_size = self.parameterAsDouble(parameters, self.BUFFER_SIZE, context)
         
-        #A variavel scale refere-se ao denominador de escala
+        # A variável scale refere-se ao denominador de escala
         if scale_option == 4:  # Personalizada
             if custom_scale <= 0:
                 raise QgsProcessingException(self.tr("A escala personalizada deve ser um valor positivo."))
@@ -168,30 +146,34 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                                self.OUTPUT,
                                                 context,
                                                 curvas.fields(),
-                                                curvas.wkbType(),
+                                                QgsWkbTypes.LineString,
                                                 curvas.sourceCrs())
 
         feedback.setProgressText('Procurando e corrigindo geometrias inválidas nas camadas de vetores...')
 
-        #Correção de geometrias inválidas nas camadas de vetores
+        # Correção de geometrias inválidas nas camadas de vetores
         curves = processing.run("native:fixgeometries",
                                 {'INPUT':curvas,
-                                 'METHOD':0,
                                  'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
         water = processing.run("native:fixgeometries", 
                                {'INPUT':massas,
-                                'METHOD':1,
                                 'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
+        total = 100.0 / 6
+
         feedback.setProgressText('Procurando e identificando as intersecções entre as camadas de vetores...')
 
-        #Obtenção da intersecção das curvas de nível com as massas d'água
+        # 1) Obtenção da intersecção das curvas de nível com as massas d'água
         intersection = processing.run("native:intersection",
                                       {'INPUT':curves,
                                        'OVERLAY':water,
                                        'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
-        
+        #feedback.setProgressText(f'A camada buffer {intersection} é do tipo {type(intersection)}')
+        QgsProject.instance().addMapLayer(intersection)
+        feedback.setProgress(int(1 * total))
+
+        # 2) Inserção de uma camada de buffer em torno das massas d'água
         if buffer_size:
             feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
             buffer = processing.run("native:buffer",
@@ -204,76 +186,128 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                     'MITER_LIMIT': 2,
                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
             
-            feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+            #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
             # Adicionar a camada de buffer ao projeto
-            QgsProject.instance().addMapLayer(buffer)
+            #QgsProject.instance().addMapLayer(buffer)
 
         else:
-            if custom_scale:
-                lim_aquidade = 0.0002 #O limite da aquidade visual é de 0,2mm (0,0002m)
-                buffer_size = lim_aquidade*scale
-                feedback.setProgressText(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade} o buffer é de {buffer_size}.')
-                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-                buffer = processing.run("native:buffer",
+            lim_aquidade = 0.0002 # O limite da aquidade visual é de 0,2mm (0,0002m)
+            buffer_size = lim_aquidade * scale
+            feedback.pushInfo(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade}m o buffer será de {buffer_size}m.')
+            feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+            buffer = processing.run("native:buffer",
                                     {'INPUT': water,
-                                        'DISTANCE': buffer_size,
-                                        'SEGMENTS': 5,
-                                        'DISSOLVE': True,
-                                        'END_CAP_STYLE': 0,
-                                        'JOIN_STYLE': 0,
-                                        'MITER_LIMIT': 2,
-                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-                
-                feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
-                # Adicionar a camada de buffer ao projeto
-                QgsProject.instance().addMapLayer(buffer)
-            else:    
-                lim_aquidade = 0.0002 #O limite da aquidade visual é de 0,2mm (0,0002m)
-                buffer_size = lim_aquidade*scale
-                feedback.setProgressText(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade} o buffer é de {buffer_size}.')
-                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-                buffer = processing.run("native:buffer",
-                                    {'INPUT': water,
-                                        'DISTANCE': buffer_size,
-                                        'SEGMENTS': 5,
-                                        'DISSOLVE': True,
-                                        'END_CAP_STYLE': 0,
-                                        'JOIN_STYLE': 0,
-                                        'MITER_LIMIT': 2,
-                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-                
-                feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
-                # Adicionar a camada de buffer ao projeto
-                QgsProject.instance().addMapLayer(buffer)
+                                     'DISTANCE': buffer_size,
+                                     'SEGMENTS': 5,
+                                     'DISSOLVE': True,
+                                     'END_CAP_STYLE': 0,
+                                     'JOIN_STYLE': 0,
+                                     'MITER_LIMIT': 2,
+                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+            
+            #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+            # Adicionar a camada de buffer ao projeto
+            #QgsProject.instance().addMapLayer(buffer)
+        feedback.setProgress(int(2 * total))
 
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        total = 100.0 / intersection.featureCount() if intersection.featureCount() else 0
-        features = intersection.getFeatures()
+        # 3) Criação de uma camada de linhas no contorno do buffer
+        feedback.setProgressText('Extraindo o contorno das massas d\'água...')
 
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                return {self.OUTPUT: "Cancelado pelo usuário"}
+        boundary = processing.run("native:polygonstolines",
+                                  {'INPUT': buffer,
+                                   'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+        #feedback.setProgressText(f'A camada de linhas no contorno {boundary} é do tipo {type(boundary)}')
+        # Adicionar a camada de contorno ao projeto
+        #QgsProject.instance().addMapLayer(boundary)
+        feedback.setProgress(int(3 * total))
 
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
+        # 4) Secção da linha de contorno
+        feedback.setProgressText('Seccionando o contorno das massas d\'água com curvas de nível...')
 
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
+        split_boundary = processing.run("native:splitwithlines",
+                                        {'INPUT': boundary,
+                                         'LINES': curves,
+                                         'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
 
-        feedback.setProgressText('Configurando o estilo da camada output de intersecções...')
-        # Configurando o estilo da camada
-        style_file = os.path.join(os.path.dirname(__file__), 'interseccoes.qml')
-        processing.run('native:setlayerstyle', 
-                       {'INPUT': dest_id,
-                        'STYLE': style_file}, 
-                       context=context, 
-                       feedback=feedback, 
-                       is_child_algorithm=True)
+        # Adicionar a camada de contorno seccionada ao projeto
+        #QgsProject.instance().addMapLayer(split_boundary)
+        feedback.setProgress(int(4 * total))
+
+        # 5) Criação das CN cortada pelo buffer
+        feedback.setProgressText(f'Cortando as curvas de nível que intersectam massas d\'água...')
+
+        #lista de geometrias do buffer de massas de água
+        water_bodies_buffered = [feat.geometry() for feat in buffer.getFeatures()]
+
+        cn_cortadas_feats = list()
+        for contour in curves.getFeatures():
+            contour_geom = contour.geometry()
+            new_geoms = [contour_geom]
+            
+            for buffer in water_bodies_buffered:
+                temp_geoms = []
+                for geom in new_geoms:
+                    if geom.intersects(buffer):
+                        split_geoms = geom.difference(buffer)
+                        temp_geoms.extend(split_geoms.asGeometryCollection())
+                    else:
+                        temp_geoms.append(geom)
+                new_geoms = temp_geoms
+            
+            for new_geom in new_geoms:
+                new_feature = QgsFeature(curves.fields())
+                new_feature.setGeometry(new_geom)
+                new_feature.setAttributes(contour.attributes())  # Mantém os atributos originais
+                cn_cortadas_feats.append(new_feature)
+
+        cn_cortadas_layer = QgsVectorLayer(f"LineString?crs={curves.crs().authid()}",
+                                     "cn_cortadas_agua",
+                                     "memory")
+        cn_cortadas_layer.dataProvider().addAttributes(curves.fields())
+        cn_cortadas_layer.updateFields()
+        cn_cortadas_layer.dataProvider().addFeatures(cn_cortadas_feats)
+        cn_cortadas_layer.updateExtents()
+        #feedback.setProgressText(f'A camada {cn_cortadas_layer} é do tipo {type(cn_cortadas_layer)}.')
+        feedback.setProgress(int(5 * total))
+
+        # 6) Substituição de trechos das curvas de nível
+        #Coletar feições das Curvas de Nível segmentada com pontas soltas
+
+        feedback.setProgressText("Iniciando a conexão das curvas de nível que foram cortadas...")
+        
+        for line_con in split_boundary.getFeatures():
+            line_con_geom = line_con.geometry()
+            line_con_geom_buffer = line_con.geometry().buffer(1, 5)
+            bbox = line_con_geom_buffer.boundingBox()
+
+            #feedback.pushInfo(f"Analisando o segmento de conexão {line_con.id()}")
+
+            for line in cn_cortadas_layer.getFeatures(bbox):
+                line_geom = line.geometry()
+
+                if line_con_geom_buffer.intersects(line_geom):
+                    
+                    for line_2 in cn_cortadas_layer.getFeatures(bbox):
+                        line_2_geom = line_2.geometry()
+
+                        if line_con_geom_buffer.intersects(line_2_geom):
+                            if line.id() != line_2.id() and line.id() > line_2.id() and line['cota'] == line_2['cota']:
+                                #feedback.pushInfo(f"A conexão entre a cn {line.id()} e a cn {line_2.id()} são diferentes e conectadas por {line_con.id()}")
+                                #feedback.pushInfo(f"E a cota entre eles é de {line['cota']} que é {line_2['cota']}.")
+                                new_feature = QgsFeature(cn_cortadas_layer.fields())
+                                new_feature.setGeometry(line_con_geom)
+                                new_feature.setAttributes(line.attributes())
+                                cn_cortadas_feats.append(new_feature)
+        
+        # Criar nova feature com as geometrias conectadas
+        for new_feat in cn_cortadas_feats:
+            sink.addFeature(new_feat, QgsFeatureSink.FastInsert)
+
+        feedback.setProgressText("Adequação das curvas de nível concluída.")
+        feedback.setProgress(int(6 * total))
         
         return {self.OUTPUT: dest_id}
-
+   
     def name(self):
         """
         Returns the algorithm name, used for identifying the algorithm. This
