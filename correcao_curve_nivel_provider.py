@@ -72,7 +72,7 @@ class CorrecaoCurvaNivelProvider(QgsProcessingProvider):
 
         This string should be short (e.g. "Lastools") and localised.
         """
-        return self.tr("Adequar curvas de nível com massa d'água")
+        return self.tr("PROJETO DE FIM DE CURSO")
 
     def icon(self):
         """
