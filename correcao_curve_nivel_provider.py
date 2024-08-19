@@ -30,7 +30,9 @@ __copyright__ = '(C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'
 
 __revision__ = '$Format:%H$'
 
+import os
 from qgis.core import QgsProcessingProvider
+from qgis.PyQt.QtGui import QIcon
 from .correcao_curve_nivel_algorithm import CorrecaoCurvaNivelAlgorithm
 
 
@@ -77,7 +79,7 @@ class CorrecaoCurvaNivelProvider(QgsProcessingProvider):
         Should return a QIcon which is used for your provider inside
         the Processing toolbox.
         """
-        return QgsProcessingProvider.icon(self)
+        return QIcon(os.path.join(os.path.dirname(__file__), 'pfc.png'))
 
     def longName(self):
         """

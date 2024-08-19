@@ -33,10 +33,12 @@ __revision__ = '$Format:%H$'
 import os
 from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt.QtGui import QIcon
 from qgis.core import (QgsProcessing,
                        QgsFeature,
                        QgsFeatureSink,
                        QgsProcessingAlgorithm,
+                       QgsProcessingParameterBoolean,
                        QgsProcessingParameterRasterLayer,
                        QgsProcessingParameterVectorLayer,
                        QgsProcessingParameterFeatureSink,
@@ -48,6 +50,7 @@ from qgis.core import (QgsProcessing,
                        QgsVectorLayer,
                        QgsWkbTypes)
 import processing
+from math import cos, radians
 
 
 class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
@@ -75,6 +78,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     CUSTOM_SCALE = 'CUSTOM_SCALE'
     BUFFER_SIZE = 'BUFFER_SIZE'
     OUTPUT = 'OUTPUT'
+    SELECTED = 'SELECTED'
     
     def initAlgorithm(self, config=None):
         """
@@ -85,6 +89,11 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 self.INPUT_VECTOR, 
                 self.tr("Insira as curvas de nível"),
                 [QgsProcessing.TypeVectorLine]
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.SELECTED, self.tr("Process only selected features")
             )
         )
         self.addParameter(
@@ -132,6 +141,18 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         scale_option = self.parameterAsEnum(parameters, self.INPUT_SCALE, context)
         custom_scale = self.parameterAsDouble(parameters, self.CUSTOM_SCALE, context)
         buffer_size = self.parameterAsDouble(parameters, self.BUFFER_SIZE, context)
+        onlySelected = self.parameterAsBool(parameters, self.SELECTED, context)
+
+        # Criação de uma camada somente com as feições selecionadas
+        if onlySelected == False: inputLayer = curvas
+        else: 
+            crs = curvas.sourceCrs()
+            inputLayer = QgsVectorLayer(f"{QgsWkbTypes.displayString(curvas.wkbType())}?crs={crs.authid()}", "feições_selecionadas", "memory")
+            inputLayer.dataProvider().addAttributes(curvas.fields())
+            inputLayer.updateFields()
+            inputFeat = curvas.selectedFeatures()
+            inputLayer.dataProvider().addFeatures(inputFeat)
+            inputLayer.updateExtents()
         
         # A variável scale refere-se ao denominador de escala
         if scale_option == 4:  # Personalizada
@@ -153,7 +174,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
         # Correção de geometrias inválidas nas camadas de vetores
         curves = processing.run("native:fixgeometries",
-                                {'INPUT':curvas,
+                                {'INPUT':inputLayer,
                                  'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
         water = processing.run("native:fixgeometries", 
@@ -176,50 +197,87 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         # 2) Inserção de uma camada de buffer em torno das massas d'água
         if buffer_size:
             feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-            buffer = processing.run("native:buffer",
-                                   {'INPUT': water,
-                                    'DISTANCE': buffer_size,
-                                    'SEGMENTS': 5,
-                                    'DISSOLVE': True,
-                                    'END_CAP_STYLE': 0,
-                                    'JOIN_STYLE': 0,
-                                    'MITER_LIMIT': 2,
-                                    'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
             
-            #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
-            # Adicionar a camada de buffer ao projeto
-            #QgsProject.instance().addMapLayer(buffer)
+            #Caso seja um buffer personalizado, ele verifica se o sistema é geográfico e converte no equivalente a graus
+            if curvas.crs().isGeographic():
+                extent = curvas.extent()
+                centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
+                buffer_size_graus = buffer_size / (111320 * cos(radians(centroid_lat)))
+                feedback.pushInfo(f'Para sistema de coordenadas geográficas, o buffer de {buffer_size} será de {buffer_size_graus}° na latitude média de {centroid_lat}°.')
+                buffer = processing.run("native:buffer",
+                                        {'INPUT': water,
+                                        'DISTANCE': buffer_size_graus,
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'END_CAP_STYLE': 0,
+                                        'JOIN_STYLE': 0,
+                                        'MITER_LIMIT': 2,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                
+            else:
+                buffer = processing.run("native:buffer",
+                                        {'INPUT': water,
+                                        'DISTANCE': buffer_size,
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'END_CAP_STYLE': 0,
+                                        'JOIN_STYLE': 0,
+                                        'MITER_LIMIT': 2,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                
+                #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+                # Adicionar a camada de buffer ao projeto
+                #QgsProject.instance().addMapLayer(buffer)
 
         else:
             lim_aquidade = 0.0002 # O limite da aquidade visual é de 0,2mm (0,0002m)
-            buffer_size = lim_aquidade * scale
-            feedback.pushInfo(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade}m o buffer será de {buffer_size}m.')
-            feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-            buffer = processing.run("native:buffer",
-                                    {'INPUT': water,
-                                     'DISTANCE': buffer_size,
-                                     'SEGMENTS': 5,
-                                     'DISSOLVE': True,
-                                     'END_CAP_STYLE': 0,
-                                     'JOIN_STYLE': 0,
-                                     'MITER_LIMIT': 2,
-                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-            
-            #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
-            # Adicionar a camada de buffer ao projeto
-            #QgsProject.instance().addMapLayer(buffer)
-        feedback.setProgress(int(2 * total))
+            if curvas.crs().isGeographic():
+                extent = curvas.extent()
+                centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
+                buffer_size_meters = lim_aquidade * scale
+                buffer_size = buffer_size_meters / (111320 * cos(radians(centroid_lat)))
 
-        # 3) Criação de uma camada de linhas no contorno do buffer
-        feedback.setProgressText('Extraindo o contorno das massas d\'água...')
+                feedback.pushInfo(f'Para a escala de 1/{scale}, o buffer será de {buffer_size}° na latitude média de {centroid_lat}°.')
+                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+                
+                # Aplicar buffer nas coordenadas geográficas (latitude e longitude)
+                buffer = processing.run("native:buffer",
+                                        {'INPUT': water,
+                                        'DISTANCE': buffer_size,  # Assumindo que estamos aplicando apenas em latitude
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
 
-        boundary = processing.run("native:polygonstolines",
-                                  {'INPUT': buffer,
-                                   'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        #feedback.setProgressText(f'A camada de linhas no contorno {boundary} é do tipo {type(boundary)}')
-        # Adicionar a camada de contorno ao projeto
-        #QgsProject.instance().addMapLayer(boundary)
-        feedback.setProgress(int(3 * total))
+            else:
+                
+                buffer_size = lim_aquidade * scale
+                feedback.pushInfo(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade}m o buffer será de {buffer_size}m.')
+                feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
+                buffer = processing.run("native:buffer",
+                                        {'INPUT': water,
+                                        'DISTANCE': buffer_size,
+                                        'SEGMENTS': 5,
+                                        'DISSOLVE': True,
+                                        'END_CAP_STYLE': 0,
+                                        'JOIN_STYLE': 0,
+                                        'MITER_LIMIT': 2,
+                                        'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                
+                #feedback.setProgressText(f'A camada buffer {buffer} é do tipo {type(buffer)}')
+                # Adicionar a camada de buffer ao projeto
+                #QgsProject.instance().addMapLayer(buffer)
+            feedback.setProgress(int(2 * total))
+
+            # 3) Criação de uma camada de linhas no contorno do buffer
+            feedback.setProgressText('Extraindo o contorno das massas d\'água...')
+
+            boundary = processing.run("native:polygonstolines",
+                                    {'INPUT': buffer,
+                                    'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+            #feedback.setProgressText(f'A camada de linhas no contorno {boundary} é do tipo {type(boundary)}')
+            # Adicionar a camada de contorno ao projeto
+            #QgsProject.instance().addMapLayer(boundary)
+            feedback.setProgress(int(3 * total))
 
         # 4) Secção da linha de contorno
         feedback.setProgressText('Seccionando o contorno das massas d\'água com curvas de nível...')
@@ -340,3 +398,6 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     
     def shortHelpString(self):
         return self.tr("Este processing identifica e adequa as curvas de nível que interceptam vetores de massa d'água à Norma da Especificação Técnica para Aquisição de Dados Geoespaciais Vetoriais (ET-ADVG) versão 3.0 (EB80-N-72.005)")
+    
+    def icon(self):
+        return QIcon(os.path.join(os.path.dirname(__file__), 'cn_agua.png'))
