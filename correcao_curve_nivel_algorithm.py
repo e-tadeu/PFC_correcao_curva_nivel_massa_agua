@@ -30,6 +30,7 @@ __copyright__ = '(C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'
 
 __revision__ = '$Format:%H$'
 
+import os
 from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterVectorLayer,
@@ -48,7 +49,8 @@ from qgis.core import (
     QgsVectorLayer
 )
 import processing
-from qgis.PyQt.QtCore import QVariant, QCoreApplication
+from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt.QtGui import QIcon
 from math import cos, radians
 
 
@@ -185,7 +187,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                 {'INPUT': moldura,
                                 'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
 
-        feedback.setProgressText('Procurando e identificando as intersecções entre as camadas de vetores...')
+        feedback.setProgressText('\nProcurando e identificando as intersecções entre as camadas de vetores...')
 
         # 1) Obtenção da intersecção das curvas de nível com as massas d'água
 
@@ -216,32 +218,31 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 # 2) Inserção de n camada de buffer em torno da massa d'água
                 feedback.setProgressText(f'\nAplicando {len(cotas_list)} buffers ao redor da massa d\'água {massa_feat.id()}...')
                 buffers_list = self.list_buffers(parameters, context, buffer_size, curvas, massas, massa_feat, massa_geom, cotas_list, scale)                      
-                feedback.setProgress(int(2 * total))
-            
+                
                 # 3) Criação de uma camada de linhas no contorno do buffer
-                feedback.setProgressText(f'\nExtraindo o contorno dos buffers da massas d\'água {massa_feat.id()}...')
+                feedback.setProgressText(f'\nExtraindo o contorno dos buffers da massa d\'água {massa_feat.id()}...')
                 boundaries_list = self.contour_buffer(parameters, context, buffers_list, moldura)
-                feedback.pushInfo(f'A massa {massa_feat} possui {len(boundaries_list)} contorno de buffers com as seguintes camadas {boundaries_list}.')
-                feedback.setProgress(int(3 * total))
+                feedback.pushInfo(f'A massa {massa_feat} possui {len(boundaries_list)} contorno(s) de buffer com as seguintes camadas {boundaries_list}.')
                 
                 # 4) Secção da linha de contorno
                 feedback.setProgressText(f'\nSeccionando o contorno dos buffers da massa d\'água {massa_feat.id()} com curvas de nível...')
                 split_boundaries_list = self.split_contour(parameters, context, feedback, boundaries_list, curves, moldura_line, cotas_list, cota_field[0])
-                feedback.pushInfo(f'A massa {massa_feat} possui {len(split_boundaries_list)} contorno de buffers seccionados pelas CN com as seguintes camadas {split_boundaries_list}.')
+                feedback.pushInfo(f'A massa {massa_feat} possui {len(split_boundaries_list)} contorno(s) de buffer seccionados pelas CN com as seguintes camadas {split_boundaries_list}.')
                 #O ordenamento na lista, segue a lógica de ligar o primeiro elemento com a menor cota
-                feedback.setProgress(int(4 * total))
-
-                feedback.pushInfo(f'\nO alcance da lista de buffer é {len(buffers_list)} de cota é {len(cotas_list)} e da split_boundaries {len(split_boundaries_list)}.')
-                for b in range (0,len(buffers_list)): 
+                
+                #feedback.pushInfo(f'\nO alcance da lista de buffer é {len(buffers_list)} de cota é {len(cotas_list)} e da split_boundaries {len(split_boundaries_list)}.')
+                for b in range (0,len(buffers_list)):
+                    elevacao = cotas_list[b] 
                     # 5) Criação das CN cortada pelo buffer
                     feedback.setProgressText(f'\nCortando as curvas de nível que intersectam o buffer da massa d\'água {massa_feat.id()}...')
-                    cn_adequadas = self.cut_cn(parameters, context, feedback, cn_adequadas, buffers_list[b], cota_field[0], cotas_list[b])
+                    buffer = buffers_list[b]
+                    cn_cortadas = self.cut_cn(parameters, context, feedback, cn_adequadas, buffer, cota_field[0], elevacao)
                     feedback.pushInfo(f'O recorte das CN {cn_adequadas} pelo buffer {buffers_list[b]} de cota {cotas_list[b]}.')
-                    feedback.setProgress(int(5 * total))
-                
+                    
                     # 6) Substituição de trechos das curvas de nível
                     feedback.setProgressText(f"\nIniciando a conexão das curvas de nível que foram cortadas...")
-                    cn_adequadas = self.substituicao_trecho(parameters, context, feedback, split_boundaries_list[b], cn_adequadas, cota_field[0], cotas_list[b])
+                    trechos_substitutos = split_boundaries_list[b]
+                    cn_adequadas = self.substituicao_trecho(parameters, context, feedback, trechos_substitutos, cn_cortadas, cota_field[0], elevacao)
         
             feedback.setProgress(int(current * total))
         
@@ -251,42 +252,43 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         
         return {self.OUTPUT: dest_id}
 
-    def interseccao(self, parameter, context, curves, water):
+    def interseccao(self, parameter, context, cn_layer, water_layer):
 
         intersection = processing.run("native:intersection",
-                                      {'INPUT':curves,
-                                       'OVERLAY':water,
+                                      {'INPUT':cn_layer,
+                                       'OVERLAY':water_layer,
                                        'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
 
         intersection = processing.run("native:multiparttosingleparts", 
                                       {'INPUT': intersection,
                                        'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
+        intersection.setName("Intersecções")
+        
         QgsProject.instance().addMapLayer(intersection)
 
         return intersection
 
-    def list_buffers(self, parameters, context, buffer_size, curvas, massas, massa_feat, massa_geom, cotas, scale):
+    def list_buffers(self, parameters, context, buffer_tamanho, cn_layer, water_layer, water_feat, water_geom, cotas_lista, escala):
         
         buffers = list()
-        if buffer_size:
+        if buffer_tamanho:
                                 
             #Caso seja um buffer personalizado, ele verifica se o sistema é geográfico e converte no equivalente a graus
-            if curvas.crs().isGeographic():
-                extent = curvas.extent()
+            if cn_layer.crs().isGeographic():
+                extent = cn_layer.extent()
                 centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
                 buffer_size_graus = buffer_size / (111320 * cos(radians(centroid_lat)))
-                #feedback.pushInfo(f'Para sistema de coordenadas geográficas, o buffer de {buffer_size} será de {buffer_size_graus}° na latitude média de {centroid_lat}°.')
                 
-                for i in range (0, len(cotas)):
-                    buffer = massa_geom.buffer(buffer_size_graus*(i+1), 5)
-                    crs = massas.sourceCrs()
-                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(massas.wkbType())}?crs={crs.authid()}", "buffer", "memory")
-                    buffer_vector.dataProvider().addAttributes(massas.fields())
+                for i in range (0, len(cotas_lista)):
+                    buffer = water_geom.buffer(buffer_size_graus*(i+1), 5)
+                    crs = water_layer.sourceCrs()
+                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(water_layer.wkbType())}?crs={crs.authid()}", "buffer", "memory")
+                    buffer_vector.dataProvider().addAttributes(water_layer.fields())
                     buffer_vector.updateFields()
                     buffer_feat = QgsFeature()
                     buffer_feat.setGeometry(buffer)
-                    buffer_feat.setAttributes(massa_geom.attributes())
+                    buffer_feat.setAttributes(water_geom.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     
@@ -295,15 +297,15 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
                 
             else:
-                for i in range (0, len(cotas)):
-                    buffer = massa_geom.buffer(buffer_size*(i+1), 5)
-                    crs = massas.sourceCrs()
-                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(massas.wkbType())}?crs={crs.authid()}", "buffer", "memory")
-                    buffer_vector.dataProvider().addAttributes(massas.fields())
+                for i in range (0, len(cotas_lista)):
+                    buffer = water_geom.buffer(buffer_size*(i+1), 5)
+                    crs = water_layer.sourceCrs()
+                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(water_layer.wkbType())}?crs={crs.authid()}", "buffer", "memory")
+                    buffer_vector.dataProvider().addAttributes(water_layer.fields())
                     buffer_vector.updateFields()
                     buffer_feat = QgsFeature()
                     buffer_feat.setGeometry(buffer)
-                    buffer_feat.setAttributes(massa_feat.attributes())
+                    buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     QgsProject.instance().addMapLayer(buffer_vector)
@@ -311,25 +313,22 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
         else:
             lim_aquidade = 0.0002 # O limite da aquidade visual é de 0,2mm (0,0002m)
-            if curvas.crs().isGeographic():
-                extent = curvas.extent()
+            if cn_layer.crs().isGeographic():
+                extent = cn_layer.extent()
                 centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
-                buffer_size_meters = lim_aquidade * scale
+                buffer_size_meters = lim_aquidade * escala
                 buffer_size = buffer_size_meters / (111320 * cos(radians(centroid_lat)))
-
-                #feedback.pushInfo(f'Para a escala de 1/{scale}, o buffer será de {buffer_size}° na latitude média de {centroid_lat}°.')
-                #feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-                
-                for i in range (0, len(cotas)):
+               
+                for i in range (0, len(cotas_lista)):
                 # Aplicar buffer nas coordenadas geográficas (latitude e longitude)
-                    buffer = massa_geom.buffer(buffer_size*(i+1), 5)
-                    crs = massas.sourceCrs()
-                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(massas.wkbType())}?crs={crs.authid()}", "buffer", "memory")
-                    buffer_vector.dataProvider().addAttributes(massas.fields())
+                    buffer = water_geom.buffer(buffer_size*(i+1), 5)
+                    crs = water_layer.sourceCrs()
+                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(water_layer.wkbType())}?crs={crs.authid()}", "buffer", "memory")
+                    buffer_vector.dataProvider().addAttributes(water_layer.fields())
                     buffer_vector.updateFields()
                     buffer_feat = QgsFeature()
                     buffer_feat.setGeometry(buffer)
-                    buffer_feat.setAttributes(massa_feat.attributes())
+                    buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     QgsProject.instance().addMapLayer(buffer_vector)
@@ -337,18 +336,16 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
             else:
                 
-                buffer_size = lim_aquidade * scale
-                #feedback.pushInfo(f'Para a escala de 1/{scale}, no limite da aquidade visual de {lim_aquidade}m o buffer será de {buffer_size}m.')
-                #feedback.setProgressText('Aplicando buffer ao redor das massas d\'água...')
-                for i in range (0, len(cotas)):
-                    buffer = massa_geom.buffer(buffer_size*(i+1), 5)
-                    crs = massas.sourceCrs()
-                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(massas.wkbType())}?crs={crs.authid()}", "buffer", "memory")
-                    buffer_vector.dataProvider().addAttributes(massas.fields())
+                buffer_size = lim_aquidade * escala
+                for i in range (0, len(cotas_lista)):
+                    buffer = water_geom.buffer(buffer_size*(i+1), 5)
+                    crs = water_layer.sourceCrs()
+                    buffer_vector = QgsVectorLayer(f"{QgsWkbTypes.displayString(water_layer.wkbType())}?crs={crs.authid()}", "buffer", "memory")
+                    buffer_vector.dataProvider().addAttributes(water_layer.fields())
                     buffer_vector.updateFields()
                     buffer_feat = QgsFeature()
                     buffer_feat.setGeometry(buffer)
-                    buffer_feat.setAttributes(massa_feat.attributes())
+                    buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     QgsProject.instance().addMapLayer(buffer_vector)
@@ -356,42 +353,42 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
         return buffers
 
-    def contour_buffer(self, parameters, context, buffers_list, moldura):
+    def contour_buffer(self, parameters, context, buffers_lista, mold):
         
         boundaries = list()
 
-        for buffer in buffers_list:
+        for buffer in buffers_lista:
             boundary = processing.run("native:polygonstolines",
                                     {'INPUT': buffer,
                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
 
             boundary = processing.run("native:clip", 
                                         {'INPUT':boundary,
-                                        'OVERLAY':moldura,
+                                        'OVERLAY':mold,
                                         'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
             QgsProject.instance().addMapLayer(boundary)
             boundaries.append(boundary)
         
         return boundaries
 
-    def split_contour(self, parameters, context, feedback, boundaries, curves, moldura_line, cotas_list, cota_field):
+    def split_contour(self, parameters, context, feedback, boundaries, cn_layer, mold_line, cotas_lista, cota_field):
 
         split_boundaries = list()
         for f in range (0, len(boundaries)):
             # Filtrar feições da moldura_line com base no atributo desejado (exemplo: 'category' == 1)
             atributo = cota_field #nome do atributo
-            valor_cota = cotas_list[f] #A lista de cotas crescente está par a par com o buffer
-            #feedback.pushInfo(f'A camada temporária usa seu atributo de campo {atributo} com valor {valor_cota} para cortar a fronteira.')
+            valor_cota = cotas_lista[f] #A lista de cotas crescente está par a par com o buffer
+
             # Criar uma nova camada temporária com as feições filtradas
-            features_filtradas = [feat for feat in curves.getFeatures() if feat[atributo] == valor_cota]
-            #feedback.pushInfo(f'As feições atributo de campo {atributo} com valor {valor_cota} são essas {features_filtradas}.')
-            crs = curves.sourceCrs()
-            mem_layer = QgsVectorLayer(f"{QgsWkbTypes.displayString(curves.wkbType())}?crs={crs.authid()}", "feições_selecionadas", "memory")
-            mem_layer.dataProvider().addAttributes(curves.fields())
+            features_filtradas = [feat for feat in cn_layer.getFeatures() if feat[atributo] == valor_cota]
+
+            crs = cn_layer.sourceCrs()
+            mem_layer = QgsVectorLayer(f"{QgsWkbTypes.displayString(cn_layer.wkbType())}?crs={crs.authid()}", "feições_selecionadas", "memory")
+            mem_layer.dataProvider().addAttributes(cn_layer.fields())
             mem_layer.updateFields()
             mem_layer.dataProvider().addFeatures(features_filtradas)
             mem_layer.updateExtents()
-            #QgsProject.instance().addMapLayer(mem_layer)
+
             # Executar o algoritmo de divisão com a camada filtrada
             split_boundary = processing.run("native:splitwithlines",
                                             {'INPUT': boundaries[f],
@@ -400,7 +397,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
             
             split_boundary = processing.run("native:splitwithlines",
                                             {'INPUT': split_boundary,
-                                            'LINES': moldura_line,
+                                            'LINES': mold_line,
                                             'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT'] #Secção da linha pela moldura
 
             # Adicionar a camada de contorno seccionada ao projeto
@@ -408,21 +405,21 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
             split_boundaries.append(split_boundary)
         return split_boundaries
 
-    def cut_cn(self, parameters, context, feedback, cn_adequadas, buffer_layer, cota_field, cota):        
+    def cut_cn(self, parameters, context, feedback, cn, buffer_layer, cota_field, cota):        
              
         # Atributo e valor da cota a ser filtrado
         atributo = cota_field #atributo 'cota'
         valor_cota = cota #valor de cota filtrado
 
         # Criar uma nova camada de memória para armazenar as feições modificadas
-        crs = cn_adequadas.sourceCrs()
-        mem_layer = QgsVectorLayer(f"{QgsWkbTypes.displayString(cn_adequadas.wkbType())}?crs={crs.authid()}", f"CN_cortada_na_cota_{valor_cota}", "memory")
-        mem_layer.dataProvider().addAttributes(cn_adequadas.fields())
+        crs = cn.sourceCrs()
+        mem_layer = QgsVectorLayer(f"{QgsWkbTypes.displayString(cn.wkbType())}?crs={crs.authid()}", f"CN_cortada_na_cota_{valor_cota}", "memory")
+        mem_layer.dataProvider().addAttributes(cn.fields())
         mem_layer.updateFields()
 
         trechos = list()
         # Iterar sobre as feições da camada de linhas
-        for line_feat in cn_adequadas.getFeatures():
+        for line_feat in cn.getFeatures():
             line_geom = line_feat.geometry()
 
             # Verificar se a feição atende ao critério de cota
@@ -450,19 +447,17 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         mem_layer.dataProvider().addFeatures(trechos)
         mem_layer.updateExtents()
 
-        cn_adequadas = processing.run("native:multiparttosingleparts", 
+        cn = processing.run("native:multiparttosingleparts", 
                         {'INPUT': mem_layer,
                         'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
         # Adicionar a nova camada ao projeto
-        QgsProject.instance().addMapLayer(cn_adequadas)
+        QgsProject.instance().addMapLayer(cn)
 
-        return cn_adequadas
+        return cn
     
     def substituicao_trecho(self, parameters, context, feedback, split_boundary, cn_cortadas_layer, cota_field, cota):
         
-        feedback.pushInfo(f'A camada de trechos de substituição é {split_boundary}.')
-
         trechos_feat = list()
         for line_con in split_boundary.getFeatures():
             line_con_geom = line_con.geometry()
@@ -479,12 +474,12 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
                         if line_con_geom_buffer.intersects(line_2_geom):
                             if line.id() != line_2.id() and line.id() > line_2.id() and line[cota_field] == cota and line_2[cota_field] == cota:
-                                feedback.pushInfo(f'A linha de conexão {line_con} conecta as linhas {line.id()} de cota {line[cota_field]} e {line_2.id()} de cota {line_2[cota_field]}.')
+                                #feedback.pushInfo(f'A linha de conexão {line_con} conecta as linhas {line.id()} de cota {line[cota_field]} e {line_2.id()} de cota {line_2[cota_field]}.')
                                 new_feature = QgsFeature(cn_cortadas_layer.fields())
                                 new_feature.setGeometry(line_con_geom)
                                 new_feature.setAttributes(line.attributes())
                                 trechos_feat.append(new_feature)
-        feedback.pushInfo(f'\nTemos a seguinte lista {trechos_feat} a ser adicionada na camada {cn_cortadas_layer}.')
+
         cn_cortadas_layer.dataProvider().addFeatures(trechos_feat)
         cn_cortadas_layer.updateExtents()
         QgsProject.instance().addMapLayer(cn_cortadas_layer)
