@@ -31,31 +31,29 @@ __copyright__ = '(C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'
 __revision__ = '$Format:%H$'
 
 import os
-from qgis.core import (
-    QgsProcessingAlgorithm,
-    QgsProcessingParameterVectorLayer,
-    QgsProcessingParameterNumber,
-    QgsProcessingParameterFeatureSink,
-    QgsFeature,
-    QgsFeatureSink,
-    QgsGeometry,
-    QgsWkbTypes,
-    QgsProcessing,
-    QgsProcessingParameterBoolean,
-    QgsProcessingParameterEnum,
-    QgsProcessingException,
-    QgsProcessingParameterField,
-    QgsProject,
-    QgsVectorLayer
-)
-import processing
+from code import interact
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QIcon
+from qgis.core import (QgsProcessing,
+                       QgsFeature,
+                       QgsFeatureSink,
+                       QgsProcessingAlgorithm,
+                       QgsProcessingParameterBoolean,
+                       QgsProcessingParameterVectorLayer,
+                       QgsProcessingParameterFeatureSink,
+                       QgsProcessingParameterField,
+                       QgsProcessingParameterEnum,
+                       QgsProcessingParameterNumber,
+                       QgsProcessingException,
+                       QgsProject,
+                       QgsVectorLayer,
+                       QgsWkbTypes)
+import processing
 from math import cos, radians
 
 
 class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
-
+ 
     INPUT_VECTOR = 'INPUT_VECTOR'
     INPUT_FIELD =  'INPUT_FIELD'
     INPUT_AGUA = 'INPUT_AGUA'
@@ -63,7 +61,8 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
     CUSTOM_SCALE = 'CUSTOM_SCALE'
     BUFFER_SIZE = 'BUFFER_SIZE'
     OUTPUT = 'OUTPUT'
-    SELECTED = 'SELECTED'
+    SELECTED_CURVES = 'SELECTED_CURVES'
+    SELECTED_WATER = 'SELECTED_WATER'
     MOLDURA = 'MOLDURA'
     
     def initAlgorithm(self, config=None):
@@ -76,7 +75,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterBoolean(
-                self.SELECTED, self.tr("Process only selected features")
+                self.SELECTED_CURVES, self.tr("Process only selected features of contour lines")
             )
         )
         self.addParameter(
@@ -92,6 +91,11 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 self.INPUT_AGUA,
                 self.tr("Insira a camada de massa d'água"),
                 types=[QgsProcessing.TypeVectorPolygon]
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.SELECTED_WATER, self.tr("Process only selected features of water")
             )
         )
         self.addParameter(
@@ -140,19 +144,20 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         scale_option = self.parameterAsEnum(parameters, self.INPUT_SCALE, context)
         custom_scale = self.parameterAsDouble(parameters, self.CUSTOM_SCALE, context)
         buffer_size = self.parameterAsDouble(parameters, self.BUFFER_SIZE, context)
-        onlySelected = self.parameterAsBool(parameters, self.SELECTED, context)
+        onlySelectedCN = self.parameterAsBool(parameters, self.SELECTED_CURVES, context)
+        onlySelectedWater = self.parameterAsBool(parameters, self.SELECTED_WATER, context)
         moldura = self.parameterAsVectorLayer(parameters, self.MOLDURA, context)
 
-        # Criação de uma camada somente com as feições selecionadas
-        if onlySelected == False: inputLayer = curvas
+        # Criação de uma camada de CN somente com as feições selecionadas de CN
+        if onlySelectedCN == False: inputLayerCN = curvas
         else: 
-            crs = curvas.sourceCrs()
-            inputLayer = QgsVectorLayer(f"{QgsWkbTypes.displayString(curvas.wkbType())}?crs={crs.authid()}", "feições_selecionadas", "memory")
-            inputLayer.dataProvider().addAttributes(curvas.fields())
-            inputLayer.updateFields()
-            inputFeat = curvas.selectedFeatures()
-            inputLayer.dataProvider().addFeatures(inputFeat)
-            inputLayer.updateExtents()
+            inputLayerCN = self.layer_features_selected(curvas)
+        
+        # Criação de uma camada de água somente com as feições selecionadas de água
+        if onlySelectedWater == False: inputLayerWater = massas
+        else: 
+            inputLayerWater = self.layer_features_selected(massas)
+
         
         # A variável scale refere-se ao denominador de escala
         if scale_option == 4:  # Personalizada
@@ -171,15 +176,9 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                                 curvas.sourceCrs())
 
         feedback.setProgressText('Procurando e corrigindo geometrias inválidas nas camadas de vetores...')
-
         # Correção de geometrias inválidas nas camadas de vetores
-        curves = processing.run("native:fixgeometries",
-                                {'INPUT':inputLayer,
-                                 'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
-        
-        water = processing.run("native:fixgeometries", 
-                               {'INPUT':massas,
-                                'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        curves = self.fix_geometry(inputLayerCN)
+        water = self.fix_geometry(inputLayerWater)
         
         total = 100.0 / water.featureCount() if water.featureCount() else 0
 
@@ -187,11 +186,15 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                 {'INPUT': moldura,
                                 'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
 
-        feedback.setProgressText('\nProcurando e identificando as intersecções entre as camadas de vetores...')
+        
 
         # 1) Obtenção da intersecção das curvas de nível com as massas d'água
-
+        feedback.setProgressText('\nProcurando e identificando as intersecções entre as camadas de vetores...')
         intersection = self.interseccao(parameters, context, curves, water)
+
+        # 2) Eliminação de feições dentro de massas d'água
+        feedback.setProgressText('\nDeletando curvas de nível dentro de massas d\'água...')
+        curves = self.case_cn_within_water(curves, water)
 
         cn_adequadas = curves
 
@@ -215,16 +218,16 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
             
             if len(cotas_list) > 0:
                 
-                # 2) Inserção de n camada de buffer em torno da massa d'água
+                # 3) Inserção de n camada de buffer em torno da massa d'água
                 feedback.setProgressText(f'\nAplicando {len(cotas_list)} buffers ao redor da massa d\'água {massa_feat.id()}...')
                 buffers_list = self.list_buffers(parameters, context, buffer_size, curvas, massas, massa_feat, massa_geom, cotas_list, scale)                      
                 
-                # 3) Criação de uma camada de linhas no contorno do buffer
+                # 4) Criação de uma camada de linhas no contorno do buffer
                 feedback.setProgressText(f'\nExtraindo o contorno dos buffers da massa d\'água {massa_feat.id()}...')
                 boundaries_list = self.contour_buffer(parameters, context, buffers_list, moldura)
                 feedback.pushInfo(f'A massa {massa_feat} possui {len(boundaries_list)} contorno(s) de buffer com as seguintes camadas {boundaries_list}.')
                 
-                # 4) Secção da linha de contorno
+                # 5) Secção da linha de contorno
                 feedback.setProgressText(f'\nSeccionando o contorno dos buffers da massa d\'água {massa_feat.id()} com curvas de nível...')
                 split_boundaries_list = self.split_contour(parameters, context, feedback, boundaries_list, curves, moldura_line, cotas_list, cota_field[0])
                 feedback.pushInfo(f'A massa {massa_feat} possui {len(split_boundaries_list)} contorno(s) de buffer seccionados pelas CN com as seguintes camadas {split_boundaries_list}.')
@@ -233,17 +236,26 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                 #feedback.pushInfo(f'\nO alcance da lista de buffer é {len(buffers_list)} de cota é {len(cotas_list)} e da split_boundaries {len(split_boundaries_list)}.')
                 for b in range (0,len(buffers_list)):
                     elevacao = cotas_list[b] 
-                    # 5) Criação das CN cortada pelo buffer
+                    # 6) Criação das CN cortada pelo buffer
                     feedback.setProgressText(f'\nCortando as curvas de nível que intersectam o buffer da massa d\'água {massa_feat.id()}...')
                     buffer = buffers_list[b]
+
+                    #feedback.pushInfo(f'\n\nA camada de CN a ser cortadas pelo buffer é {cn_adequadas}.')
                     cn_cortadas = self.cut_cn(parameters, context, feedback, cn_adequadas, buffer, cota_field[0], elevacao)
                     feedback.pushInfo(f'O recorte das CN {cn_adequadas} pelo buffer {buffers_list[b]} de cota {cotas_list[b]}.')
+
+                    #cn_cortadas = self.fix_geometry(cn_cortadas)
                     
-                    # 6) Substituição de trechos das curvas de nível
+                    #feedback.pushInfo(f'\n\nA camada de CN cortadas é {cn_cortadas}.')
+
+                    # 7) Substituição de trechos das curvas de nível
                     feedback.setProgressText(f"\nIniciando a conexão das curvas de nível que foram cortadas...")
                     trechos_substitutos = split_boundaries_list[b]
                     cn_adequadas = self.substituicao_trecho(parameters, context, feedback, trechos_substitutos, cn_cortadas, cota_field[0], elevacao)
-        
+
+                    #cn_adequadas = self.fix_geometry(cn_adequadas)
+                    #feedback.pushInfo(f'\n\nA camada de CN adequadas é {cn_adequadas}.')
+
             feedback.setProgress(int(current * total))
         
         # Adição das feições na camada output
@@ -292,7 +304,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     
-                    QgsProject.instance().addMapLayer(buffer_vector)
+                    #QgsProject.instance().addMapLayer(buffer_vector)
                     buffers.append(buffer_vector) #Lista de buffers em camada
 
                 
@@ -308,7 +320,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                     buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
-                    QgsProject.instance().addMapLayer(buffer_vector)
+                    #QgsProject.instance().addMapLayer(buffer_vector)
                     buffers.append(buffer_vector) #Lista de buffers em camada             
 
         else:
@@ -331,7 +343,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                     buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
-                    QgsProject.instance().addMapLayer(buffer_vector)
+                    #QgsProject.instance().addMapLayer(buffer_vector)
                     buffers.append(buffer_vector) #Lista de buffers em camada
 
             else:
@@ -348,7 +360,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                     buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
-                    QgsProject.instance().addMapLayer(buffer_vector)
+                    #QgsProject.instance().addMapLayer(buffer_vector)
                     buffers.append(buffer_vector) #Lista de buffers em camada
 
         return buffers
@@ -366,7 +378,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                         {'INPUT':boundary,
                                         'OVERLAY':mold,
                                         'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
-            QgsProject.instance().addMapLayer(boundary)
+            #QgsProject.instance().addMapLayer(boundary)
             boundaries.append(boundary)
         
         return boundaries
@@ -401,8 +413,9 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                             'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT'] #Secção da linha pela moldura
 
             # Adicionar a camada de contorno seccionada ao projeto
-            QgsProject.instance().addMapLayer(split_boundary)
+            #QgsProject.instance().addMapLayer(split_boundary)
             split_boundaries.append(split_boundary)
+        
         return split_boundaries
 
     def cut_cn(self, parameters, context, feedback, cn, buffer_layer, cota_field, cota):        
@@ -452,7 +465,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                         'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
         
         # Adicionar a nova camada ao projeto
-        QgsProject.instance().addMapLayer(cn)
+        #QgsProject.instance().addMapLayer(cn)
 
         return cn
     
@@ -482,8 +495,55 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
 
         cn_cortadas_layer.dataProvider().addFeatures(trechos_feat)
         cn_cortadas_layer.updateExtents()
-        QgsProject.instance().addMapLayer(cn_cortadas_layer)
+        #QgsProject.instance().addMapLayer(cn_cortadas_layer)
+        
         return cn_cortadas_layer
+    
+    def layer_features_selected(self, layer):
+            
+        crs = layer.sourceCrs()
+        outputLayer = QgsVectorLayer(f"{QgsWkbTypes.displayString(layer.wkbType())}?crs={crs.authid()}",
+                                    "feições_selecionadas", 
+                                    "memory")
+        outputLayer.dataProvider().addAttributes(layer.fields())
+        outputLayer.updateFields()
+        outputFeat = layer.selectedFeatures()
+        outputLayer.dataProvider().addFeatures(outputFeat)
+        outputLayer.updateExtents()
+
+        return outputLayer
+    
+    def fix_geometry (self, layer):
+
+        outputLayer = processing.run("native:fixgeometries",
+                                     {'INPUT':layer,
+                                      'OUTPUT':'TEMPORARY_OUTPUT'})['OUTPUT']
+        
+        return outputLayer
+    
+    def case_cn_within_water(self, layer_cn, layer_water):
+        
+        layer_cn.startEditing()
+        for linha_feature in layer_cn.getFeatures():
+            geom_linha = linha_feature.geometry()
+            comprimento_total = geom_linha.length()
+            bbox = geom_linha.boundingBox()
+            
+            comprimento_interseccao = 0
+            for poligono_feature in layer_water.getFeatures(bbox):
+                geom_poligono = poligono_feature.geometry()
+                interseccao = geom_linha.intersection(geom_poligono)
+
+                if interseccao:
+                    comprimento_interseccao += interseccao.length()
+            
+            # Verificação se mais de 50% da linha está dentro da massa d'agua
+            if comprimento_interseccao > (0.4 * comprimento_total):
+                layer_cn.deleteFeature(linha_feature.id())
+
+        layer_cn.commitChanges()
+
+        return layer_cn
    
     def name(self):
         """
