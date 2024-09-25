@@ -344,7 +344,7 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                     buffer_vector.updateFields()
                     buffer_feat = QgsFeature()
                     buffer_feat.setGeometry(buffer)
-                    buffer_feat.setAttributes(water_geom.attributes())
+                    buffer_feat.setAttributes(water_feat.attributes())
                     buffer_vector.dataProvider().addFeatures([buffer_feat])
                     buffer_vector.updateExtents()
                     
