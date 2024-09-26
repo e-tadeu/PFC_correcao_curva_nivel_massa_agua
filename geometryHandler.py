@@ -11,6 +11,8 @@
         email                : borba.philipe@eb.mil.br
  ***************************************************************************/
 
+ Extracted from https://github.com/dsgoficial/DsgTools/blob/master/DsgTools/core/GeometricTools/geometryHandler.py
+
 /***************************************************************************
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *

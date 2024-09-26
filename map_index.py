@@ -13,6 +13,9 @@
         mod history          : 2014-12-17 by Maurício de Paulo - Cartographic Engineer @ Brazilian Army
         mod history          : 2020-04-01 by Philipe Borba - Cartographic Engineer @ Brazilian Army
  ***************************************************************************/
+
+ Extracted from https://github.com/dsgoficial/DsgTools/blob/67c7bca45aa3ee1630e43fcf3a9d125a2807933b/DsgTools/core/Utils/FrameTools/map_index.py#L4
+ 
 /***************************************************************************
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
