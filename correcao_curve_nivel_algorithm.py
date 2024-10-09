@@ -327,9 +327,10 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
                                 
             #Caso seja um buffer personalizado, ele verifica se o sistema é geográfico e converte no equivalente a graus
             if cn_layer.crs().isGeographic():
-                extent = cn_layer.extent()
-                centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
-                buffer_size_graus = buffer_tamanho / (111320 * cos(radians(centroid_lat)))
+                #extent = cn_layer.extent()
+                #centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
+                extent = cn_layer.extent().center().y()
+                buffer_size_graus = buffer_tamanho / (111320 * cos(radians(extent)))
                 
                 for i in range (0, len(cotas_lista)):
                     buffer = water_geom.buffer(buffer_size_graus*(i+1), 5)
@@ -365,10 +366,11 @@ class CorrecaoCurvaNivelAlgorithm(QgsProcessingAlgorithm):
         else:
             lim_aquidade = 0.0002 # O limite da aquidade visual é de 0,2mm (0,0002m)
             if cn_layer.crs().isGeographic():
-                extent = cn_layer.extent()
-                centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
+                #extent = cn_layer.extent()
+                #centroid_lat = (extent.yMinimum() + extent.yMaximum()) / 2 #Pega a latitude do centroide do projeto
+                extent = cn_layer.extent().center().y()
                 buffer_size_meters = lim_aquidade * escala
-                buffer_size = buffer_size_meters / (111320 * cos(radians(centroid_lat)))
+                buffer_size = buffer_size_meters / (111320 * cos(radians(extent)))
                
                 for i in range (0, len(cotas_lista)):
                 # Aplicar buffer nas coordenadas geográficas (latitude e longitude)
