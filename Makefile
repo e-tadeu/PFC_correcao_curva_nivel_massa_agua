@@ -5,8 +5,8 @@
 #							 -------------------
 #		begin				: 2023-11-21
 #		git sha				: $Format:%H$
-#		copyright			: (C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius
-#		email				: e.tadeu.eb@ime.eb.br; joao.pereira@ime.eb.br; viniciusmagalhaes@ime.eb.br
+#		copyright			: (C) 2023 by Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius; Cap Raphael Luiz
+#		email				: e.tadeu.eb@ime.eb.br; joao.pereira@ime.eb.br; viniciusmagalhaes@ime.eb.br; raphaelluiz.franca@ime.eb.br
 # ***************************************************************************/
 #
 #/***************************************************************************

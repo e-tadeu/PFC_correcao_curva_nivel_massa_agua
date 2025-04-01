@@ -11,8 +11,6 @@
         email                : borba.philipe@eb.mil.br
  ***************************************************************************/
 
- Extracted from https://github.com/dsgoficial/DsgTools/blob/67c7bca45aa3ee1630e43fcf3a9d125a2807933b/DsgTools/core/DSGToolsProcessingAlgs/algRunner.py#L41
-
 /***************************************************************************
  *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *

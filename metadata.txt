@@ -7,8 +7,8 @@ name=Correção de Curva de Nível
 qgisMinimumVersion=3.0
 description=Este plugin identifica e corrige linhas de curva de nível que intersectam vetores de massa d'água.
 version=0.1
-author=Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius
-email=e.tadeu.eb@ime.eb.br; joao.pereira@ime.eb.br; viniciusmagalhaes@ime.eb.br
+author=Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius; Cap Raphael Luiz
+email=e.tadeu.eb@ime.eb.br; joao.pereira@ime.eb.br; viniciusmagalhaes@ime.eb.br; raphaelluiz.franca@ime.eb.br
 
 about=Este complemento identifica e corrige linhas de curvas de nível que intersectam vetores de massa d'água.
 
