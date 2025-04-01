@@ -41,7 +41,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'CorrecaoCurvaNivel'
-copyright = u'2013, Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'
+copyright = u'2013, Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius; Cap Raphael Luiz'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -179,7 +179,7 @@ htmlhelp_basename = 'TemplateClassdoc'
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
   ('index', 'CorrecaoCurvaNivel.tex', u'CorrecaoCurvaNivel Documentation',
-   u'Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius', 'manual'),
+   u'Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius; Cap Raphael Luiz', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -212,5 +212,5 @@ latex_documents = [
 # (source start file, name, description, authors, manual section).
 man_pages = [
     ('index', 'TemplateClass', u'CorrecaoCurvaNivel Documentation',
-     [u'Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius'], 1)
+     [u'Cap Tadeu; 1° Ten Kreitlon; 1° Ten Vinicius; Cap Raphael Luiz'], 1)
 ]
